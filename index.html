@@ -23,7 +23,6 @@
             transform: translateY(-8px);
             box-shadow: 0 0 15px rgba(59, 130, 246, 0.5);
         }
-        /* Custom scrollbar for horizontal card scroll on mobile */
         .hide-scrollbar::-webkit-scrollbar { display: none; }
         .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         
@@ -49,7 +48,7 @@
             border-radius: 0.5rem;
         }
         .card-front {
-            background-color: #1e293b; /* Dark back of card */
+            background-color: #1e293b;
             border: 2px solid #334155;
             color: #94a3b8;
         }
@@ -183,7 +182,7 @@
     <!-- Firebase SDKs -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, updateDoc, onSnapshot, getDoc, deleteDoc, deleteField } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Constants
@@ -191,6 +190,7 @@
         const ANIMALS = ['Panda', 'Tiger', 'Eagle', 'Dolphin', 'Fox', 'Koala', 'Penguin', 'Lion', 'Bear', 'Owl', 'Wolf', 'Rabbit', 'Turtle'];
         const ADJECTIVES = ['Anonymous', 'Secret', 'Hidden', 'Mystic', 'Silent', 'Clever', 'Swift', 'Brave'];
         const INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+        const APP_ID = 'poker-planner-prod';
         
         // App State
         let db, auth;
@@ -200,7 +200,7 @@
         let inactivityTimer = null;
         let myName = '';
         let myVote = null;
-        let sessionState = 'voting'; // 'voting' | 'revealed'
+        let sessionState = 'voting';
         let participantsData = {};
 
         // DOM Elements
@@ -231,14 +231,12 @@
             sessionEndedText: document.getElementById('session-ended-text')
         };
 
-        // Utility: Generate Random Name
         function generateName() {
             const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
             const animal = ANIMALS[Math.floor(Math.random() * ANIMALS.length)];
             return `${adj} ${animal}`;
         }
 
-        // Utility: Show Toast
         function showToast(message, isError = true) {
             els.toastMsg.textContent = message;
             els.toast.classList.remove('bg-red-500', 'bg-green-500');
@@ -247,7 +245,6 @@
             setTimeout(() => els.toast.classList.add('opacity-0'), 3000);
         }
 
-        // Utility: Show Info Banner on Join Screen
         function showSessionEndedInfo(reason) {
             if (reason) {
                 els.sessionEndedText.textContent = reason;
@@ -257,10 +254,8 @@
             }
         }
 
-        // Initialize Firebase & Auth
         async function init() {
             try {
-                // Your web app's Firebase configuration
                 const firebaseConfig = {
                     apiKey: "AIzaSyBghjuK7EzWfBzVs0uHhbojChPSdQPPhwQ",
                     authDomain: "poker-planner-abd30.firebaseapp.com",
@@ -270,7 +265,384 @@
                     appId: "1:836980061720:web:bee97d3d1ae0e16654b56d",
                     measurementId: "G-0B0GHJQSDL"
                 };
+
                 const app = initializeApp(firebaseConfig);
                 auth = getAuth(app);
                 db = getFirestore(app);
-// ... existing code ... -->
+
+                const cred = await signInAnonymously(auth);
+                currentUser = cred.user;
+
+                myName = generateName();
+                els.previewName.textContent = myName;
+
+                renderDeck();
+
+                const urlParams = new URLSearchParams(window.location.search);
+                const sessionParam = urlParams.get('session');
+                
+                screens.loading.classList.add('hidden');
+
+                if (sessionParam) {
+                    els.sessionIdInput.value = sessionParam.toUpperCase();
+                    joinSession(sessionParam.toUpperCase());
+                } else {
+                    screens.join.classList.remove('hidden');
+                }
+            } catch (err) {
+                console.error("Initialization error:", err);
+                screens.loading.classList.add('hidden');
+                screens.join.classList.remove('hidden');
+                showToast("Connection error: Check Firebase authorized domains & rules.");
+            }
+        }
+
+        function renderDeck() {
+            els.votingDeck.innerHTML = '';
+            FIBONACCI.forEach(val => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'poker-card shrink-0 w-14 h-20 sm:w-16 sm:h-24 rounded-xl bg-slate-900 border-2 border-slate-600 flex items-center justify-center text-xl font-bold text-slate-200 cursor-pointer select-none';
+                btn.textContent = val;
+                btn.dataset.val = val;
+                btn.onclick = () => castVote(val);
+                els.votingDeck.appendChild(btn);
+            });
+        }
+
+        function getSessionRef(sessionId) {
+            return doc(db, 'artifacts', APP_ID, 'public', 'data', 'sessions', sessionId);
+        }
+
+        async function joinSession(sessionId) {
+            if (!sessionId || !currentUser) return;
+            sessionId = sessionId.trim().toUpperCase();
+
+            screens.join.classList.add('hidden');
+            screens.loading.classList.remove('hidden');
+            showSessionEndedInfo(null);
+
+            try {
+                const sessionRef = getSessionRef(sessionId);
+                const snap = await getDoc(sessionRef);
+                const now = Date.now();
+
+                if (snap.exists()) {
+                    const data = snap.data();
+                    const participants = data.participants || {};
+                    const isStale = data.lastActivity && (now - data.lastActivity > INACTIVITY_TIMEOUT_MS);
+                    const isEmpty = Object.keys(participants).length === 0;
+
+                    if (isStale || isEmpty) {
+                        await deleteDoc(sessionRef);
+                        await setDoc(sessionRef, {
+                            status: 'voting',
+                            lastActivity: now,
+                            participants: {
+                                [currentUser.uid]: { name: myName, vote: null, joinedAt: now }
+                            }
+                        });
+                    } else {
+                        if (!participants[currentUser.uid] && Object.keys(participants).length >= 10) {
+                            screens.loading.classList.add('hidden');
+                            screens.join.classList.remove('hidden');
+                            showToast("Room is full (max 10 participants).");
+                            return;
+                        }
+                        await updateDoc(sessionRef, {
+                            [`participants.${currentUser.uid}`]: {
+                                name: myName,
+                                vote: participants[currentUser.uid]?.vote ?? null,
+                                joinedAt: now
+                            },
+                            lastActivity: now
+                        });
+                    }
+                } else {
+                    await setDoc(sessionRef, {
+                        status: 'voting',
+                        lastActivity: now,
+                        participants: {
+                            [currentUser.uid]: { name: myName, vote: null, joinedAt: now }
+                        }
+                    });
+                }
+
+                currentSessionId = sessionId;
+                els.displaySessionId.textContent = currentSessionId;
+                els.displayName.textContent = myName;
+
+                try {
+                    const url = new URL(window.location.href);
+                    url.searchParams.set('session', currentSessionId);
+                    window.history.pushState({}, '', url);
+                } catch (e) {}
+
+                subscribeToSession(sessionId);
+                screens.loading.classList.add('hidden');
+                screens.board.classList.remove('hidden');
+
+            } catch (err) {
+                console.error("Join error:", err);
+                screens.loading.classList.add('hidden');
+                screens.join.classList.remove('hidden');
+                showToast("Could not join session. Verify Firestore rules.");
+            }
+        }
+
+        function resetInactivityTimer(lastActivity) {
+            if (inactivityTimer) clearTimeout(inactivityTimer);
+            const elapsed = Date.now() - (lastActivity || Date.now());
+            const remaining = Math.max(0, INACTIVITY_TIMEOUT_MS - elapsed);
+
+            inactivityTimer = setTimeout(async () => {
+                if (currentSessionId) {
+                    const sessionRef = getSessionRef(currentSessionId);
+                    try { await deleteDoc(sessionRef); } catch (e) {}
+                    cleanupLocalSession("Session ended and was wiped after 30 minutes of inactivity.");
+                }
+            }, remaining);
+        }
+
+        function subscribeToSession(sessionId) {
+            if (unsubscribe) unsubscribe();
+            const sessionRef = getSessionRef(sessionId);
+
+            unsubscribe = onSnapshot(sessionRef, (snap) => {
+                if (!snap.exists()) {
+                    cleanupLocalSession("This session ended and all votes were wiped.");
+                    return;
+                }
+
+                const data = snap.data();
+                sessionState = data.status || 'voting';
+                participantsData = data.participants || {};
+                
+                resetInactivityTimer(data.lastActivity);
+
+                const me = participantsData[currentUser.uid];
+                myVote = me ? me.vote : null;
+
+                updateBoardUI();
+            }, (err) => {
+                console.error("Snapshot error:", err);
+                showToast("Lost connection to session.");
+            });
+        }
+
+        function updateBoardUI() {
+            const entries = Object.entries(participantsData);
+            const total = entries.length;
+            const votedCount = entries.filter(([, p]) => p.vote !== null && p.vote !== undefined).length;
+
+            els.voteTally.textContent = `${votedCount}/${total} participant${total === 1 ? '' : 's'} voted`;
+
+            if (sessionState === 'voting') {
+                els.roundStatus.textContent = votedCount === total && total > 0 ? "Everyone has voted!" : "Waiting for votes...";
+                els.btnReveal.classList.remove('hidden');
+                els.btnReveal.disabled = votedCount === 0;
+                els.btnReset.classList.add('hidden');
+                els.resultSummary.classList.add('hidden');
+            } else {
+                els.roundStatus.textContent = "Votes Revealed";
+                els.btnReveal.classList.add('hidden');
+                els.btnReset.classList.remove('hidden');
+                
+                const numericVotes = entries
+                    .map(([, p]) => parseFloat(p.vote))
+                    .filter(v => !isNaN(v));
+                
+                if (numericVotes.length > 0) {
+                    const sum = numericVotes.reduce((a, b) => a + b, 0);
+                    const avg = Math.round((sum / numericVotes.length) * 100) / 100;
+                    els.averageValue.textContent = avg;
+                    els.resultSummary.classList.remove('hidden');
+                } else {
+                    els.resultSummary.classList.add('hidden');
+                }
+            }
+
+            document.querySelectorAll('.poker-card').forEach(card => {
+                if (card.dataset.val === String(myVote)) {
+                    card.classList.add('selected');
+                } else {
+                    card.classList.remove('selected');
+                }
+                card.disabled = (sessionState === 'revealed');
+            });
+
+            els.participantsGrid.innerHTML = '';
+            entries.sort((a, b) => (a[1].joinedAt || 0) - (b[1].joinedAt || 0)).forEach(([uid, p]) => {
+                const isMe = uid === currentUser.uid;
+                const hasVoted = p.vote !== null && p.vote !== undefined;
+                const isRevealed = sessionState === 'revealed';
+
+                const wrapper = document.createElement('div');
+                wrapper.className = 'flex flex-col items-center gap-2 w-28';
+
+                const cardFlip = document.createElement('div');
+                cardFlip.className = `card-flip w-16 h-24 ${isRevealed ? 'revealed' : ''}`;
+
+                cardFlip.innerHTML = `
+                    <div class="card-flip-inner">
+                        <div class="card-face card-front ${hasVoted ? 'has-voted' : ''}">
+                            ${hasVoted 
+                                ? '<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"></path></svg>' 
+                                : '<span class="text-xs">...</span>'}
+                        </div>
+                        <div class="card-face card-back">
+                            ${hasVoted ? p.vote : '-'}
+                        </div>
+                    </div>
+                `;
+
+                const nameLabel = document.createElement('span');
+                nameLabel.className = `text-xs text-center truncate w-full ${isMe ? 'text-blue-400 font-semibold' : 'text-slate-300'}`;
+                nameLabel.textContent = isMe ? `${p.name} (You)` : p.name;
+
+                wrapper.appendChild(cardFlip);
+                wrapper.appendChild(nameLabel);
+                els.participantsGrid.appendChild(wrapper);
+            });
+        }
+
+        async function castVote(val) {
+            if (!currentSessionId || !currentUser || sessionState === 'revealed') return;
+            const newVote = (myVote === val) ? null : val;
+            
+            try {
+                const sessionRef = getSessionRef(currentSessionId);
+                await updateDoc(sessionRef, {
+                    [`participants.${currentUser.uid}.vote`]: newVote,
+                    lastActivity: Date.now()
+                });
+            } catch (err) {
+                console.error("Vote error:", err);
+                showToast("Failed to submit vote.");
+            }
+        }
+
+        async function revealCards() {
+            if (!currentSessionId) return;
+            try {
+                await updateDoc(getSessionRef(currentSessionId), {
+                    status: 'revealed',
+                    lastActivity: Date.now()
+                });
+            } catch (err) {
+                console.error("Reveal error:", err);
+            }
+        }
+
+        async function resetRound() {
+            if (!currentSessionId) return;
+            try {
+                const updates = {
+                    status: 'voting',
+                    lastActivity: Date.now()
+                };
+                Object.keys(participantsData).forEach(uid => {
+                    updates[`participants.${uid}.vote`] = null;
+                });
+                await updateDoc(getSessionRef(currentSessionId), updates);
+            } catch (err) {
+                console.error("Reset error:", err);
+            }
+        }
+
+        async function leaveSession(reason = null) {
+            if (currentSessionId && currentUser) {
+                const sessionIdToLeave = currentSessionId;
+                const uidToLeave = currentUser.uid;
+                
+                if (unsubscribe) {
+                    unsubscribe();
+                    unsubscribe = null;
+                }
+
+                try {
+                    const sessionRef = getSessionRef(sessionIdToLeave);
+                    const snap = await getDoc(sessionRef);
+                    if (snap.exists()) {
+                        const participants = snap.data().participants || {};
+                        const remainingKeys = Object.keys(participants).filter(k => k !== uidToLeave);
+                        if (remainingKeys.length === 0) {
+                            await deleteDoc(sessionRef);
+                            reason = reason || "You were the last participant—the session and all votes have been wiped.";
+                        } else {
+                            await updateDoc(sessionRef, {
+                                [`participants.${uidToLeave}`]: deleteField(),
+                                lastActivity: Date.now()
+                            });
+                        }
+                    }
+                } catch (e) {
+                    console.error("Error leaving session:", e);
+                }
+            }
+            cleanupLocalSession(reason);
+        }
+
+        function cleanupLocalSession(reason = null) {
+            if (unsubscribe) {
+                unsubscribe();
+                unsubscribe = null;
+            }
+            if (inactivityTimer) {
+                clearTimeout(inactivityTimer);
+                inactivityTimer = null;
+            }
+            currentSessionId = null;
+            myVote = null;
+            participantsData = {};
+
+            try {
+                const url = new URL(window.location.href);
+                url.searchParams.delete('session');
+                window.history.pushState({}, '', url);
+            } catch (e) {}
+
+            screens.board.classList.add('hidden');
+            screens.join.classList.remove('hidden');
+            showSessionEndedInfo(reason);
+        }
+
+        // Event Listeners
+        els.joinForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            joinSession(els.sessionIdInput.value);
+        });
+
+        els.btnReveal.addEventListener('click', revealCards);
+        els.btnReset.addEventListener('click', resetRound);
+        els.btnLeave.addEventListener('click', () => leaveSession());
+
+        els.btnCopyLink.addEventListener('click', () => {
+            const url = new URL(window.location.href);
+            url.searchParams.set('session', currentSessionId);
+            navigator.clipboard.writeText(url.toString()).then(() => {
+                showToast("Session invite link copied!", false);
+            }).catch(() => {
+                showToast(`Session ID: ${currentSessionId}`, false);
+            });
+        });
+
+        window.addEventListener('beforeunload', () => {
+            if (currentSessionId && currentUser) {
+                const sessionRef = getSessionRef(currentSessionId);
+                const remainingKeys = Object.keys(participantsData).filter(k => k !== currentUser.uid);
+                if (remainingKeys.length === 0) {
+                    deleteDoc(sessionRef).catch(() => {});
+                } else {
+                    updateDoc(sessionRef, {
+                        [`participants.${currentUser.uid}`]: deleteField()
+                    }).catch(() => {});
+                }
+            }
+        });
+
+        // Start App
+        init();
+    </script>
+</body>
+</html>
