@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Agile Planning Poker</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #f8fafc; }
@@ -65,6 +66,9 @@
             font-weight: bold;
             font-size: 1.5rem;
         }
+        #qr-code-container img, #qr-code-container canvas {
+            margin: 0 auto;
+        }
     </style>
 </head>
 <body class="min-h-screen flex flex-col">
@@ -72,6 +76,21 @@
     <!-- Toast Notification -->
     <div id="toast" class="fixed top-4 right-4 bg-red-500 text-white px-4 py-2 rounded shadow-lg transition-opacity duration-300 opacity-0 pointer-events-none z-50">
         <span id="toast-message">Error</span>
+    </div>
+
+    <!-- QR Code Modal -->
+    <div id="qr-modal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="bg-slate-800 border border-slate-700 rounded-2xl p-6 max-w-xs w-full text-center shadow-2xl relative">
+            <button id="btn-close-qr" class="absolute top-3 right-3 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-700 transition-colors" aria-label="Close QR Modal">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+            </button>
+            <h3 class="text-lg font-bold text-white mb-1">Scan to Join</h3>
+            <p class="text-xs text-slate-400 mb-4">Session: <span id="qr-session-label" class="text-blue-400 font-semibold">---</span></p>
+            <div class="bg-white p-4 rounded-xl inline-block shadow-inner mb-4">
+                <div id="qr-code-container"></div>
+            </div>
+            <p class="text-xs text-slate-400">Point your phone camera at the QR code to join this room directly.</p>
+        </div>
     </div>
 
     <!-- Loading Overlay -->
@@ -116,11 +135,15 @@
             <div class="flex items-center gap-3">
                 <div class="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center font-bold text-lg shadow">PP</div>
                 <div>
-                    <div class="flex items-center gap-2">
+                    <div class="flex flex-wrap items-center gap-2">
                         <h2 class="font-bold text-lg" id="display-session-id">---</h2>
                         <button id="btn-copy-link" title="Copy Session Link" class="text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 px-2 py-1 rounded flex items-center gap-1 transition-colors">
                             <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
-                            <span>Copy ID</span>
+                            <span>Copy Link</span>
+                        </button>
+                        <button id="btn-show-qr" title="Show Join QR Code" class="text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 px-2 py-1 rounded flex items-center gap-1 transition-colors">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z"></path></svg>
+                            <span>QR Code</span>
                         </button>
                     </div>
                     <p class="text-xs text-slate-400">Logged in as <span id="display-name" class="text-blue-400 font-medium">---</span></p>
@@ -169,9 +192,9 @@
             </div>
 
             <!-- Voting Deck (Bottom) -->
-            <div class="bg-slate-800 p-4 sm:p-6 rounded-2xl border border-slate-700 shadow-xl mt-auto">
-                <p class="text-center text-sm font-medium text-slate-400 mb-4" id="deck-instruction">Choose your card</p>
-                <div class="flex overflow-x-auto pb-2 sm:pb-0 sm:justify-center gap-3 sm:gap-4 hide-scrollbar">
+            <div class="bg-slate-800 px-4 py-4 sm:px-6 sm:py-5 rounded-2xl border border-slate-700 shadow-xl mt-auto">
+                <p class="text-center text-sm font-medium text-slate-400 mb-1" id="deck-instruction">Choose your card</p>
+                <div class="flex overflow-x-auto pt-4 pb-3 px-2 sm:justify-center gap-3 sm:gap-4 hide-scrollbar">
                     <!-- Cards injected here via JS -->
                 </div>
             </div>
@@ -218,6 +241,11 @@
             displaySessionId: document.getElementById('display-session-id'),
             displayName: document.getElementById('display-name'),
             btnCopyLink: document.getElementById('btn-copy-link'),
+            btnShowQr: document.getElementById('btn-show-qr'),
+            btnCloseQr: document.getElementById('btn-close-qr'),
+            qrModal: document.getElementById('qr-modal'),
+            qrSessionLabel: document.getElementById('qr-session-label'),
+            qrContainer: document.getElementById('qr-code-container'),
             btnLeave: document.getElementById('btn-leave'),
             btnReveal: document.getElementById('btn-reveal'),
             btnReset: document.getElementById('btn-reset'),
@@ -252,6 +280,31 @@
             } else {
                 els.sessionEndedBanner.classList.add('hidden');
             }
+        }
+
+        function getSessionInviteUrl() {
+            const url = new URL(window.location.href);
+            url.searchParams.set('session', currentSessionId);
+            return url.toString();
+        }
+
+        function openQrModal() {
+            if (!currentSessionId) return;
+            els.qrSessionLabel.textContent = currentSessionId;
+            els.qrContainer.innerHTML = '';
+            new QRCode(els.qrContainer, {
+                text: getSessionInviteUrl(),
+                width: 200,
+                height: 200,
+                colorDark: "#0f172a",
+                colorLight: "#ffffff",
+                correctLevel: QRCode.CorrectLevel.M
+            });
+            els.qrModal.classList.remove('hidden');
+        }
+
+        function closeQrModal() {
+            els.qrModal.classList.add('hidden');
         }
 
         async function init() {
@@ -584,6 +637,7 @@
         }
 
         function cleanupLocalSession(reason = null) {
+            closeQrModal();
             if (unsubscribe) {
                 unsubscribe();
                 unsubscribe = null;
@@ -618,13 +672,17 @@
         els.btnLeave.addEventListener('click', () => leaveSession());
 
         els.btnCopyLink.addEventListener('click', () => {
-            const url = new URL(window.location.href);
-            url.searchParams.set('session', currentSessionId);
-            navigator.clipboard.writeText(url.toString()).then(() => {
+            navigator.clipboard.writeText(getSessionInviteUrl()).then(() => {
                 showToast("Session invite link copied!", false);
             }).catch(() => {
                 showToast(`Session ID: ${currentSessionId}`, false);
             });
+        });
+
+        els.btnShowQr.addEventListener('click', openQrModal);
+        els.btnCloseQr.addEventListener('click', closeQrModal);
+        els.qrModal.addEventListener('click', (e) => {
+            if (e.target === els.qrModal) closeQrModal();
         });
 
         window.addEventListener('beforeunload', () => {
